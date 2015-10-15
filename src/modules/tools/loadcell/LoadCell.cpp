@@ -18,6 +18,7 @@
 #include "Pauser.h"
 
 #include <ctype.h>
+#include <sstream>
 
 #define loadcell_enable_checksum      CHECKSUM("enable")
 #define loadcell_data_pin_checksum    CHECKSUM("data_pin")
@@ -55,8 +56,8 @@ void LoadCell::on_module_loaded()
 // Get config
 void LoadCell::on_config_reload(void *argument)
 {
-    this->pins[PIN_DATA].from_string( THEKERNEL->config->value(loadcell_checksum, loadcell_data_pin_checksum  )->by_default("0.27" )->as_string())->as_output();
-    this->pins[PIN_CLCK].from_string( THEKERNEL->config->value(loadcell_checksum, loadcell_clock_pin_checksum )->by_default("0.28" )->as_string())->as_input();
+    this->pins[PIN_DATA].from_string( THEKERNEL->config->value(loadcell_checksum, loadcell_data_pin_checksum  )->by_default("0.27" )->as_string())->as_input();
+    this->pins[PIN_CLCK].from_string( THEKERNEL->config->value(loadcell_checksum, loadcell_clock_pin_checksum )->by_default("0.28" )->as_string())->as_output();
 
     // These are the old ones in steps still here for backwards compatibility
     this->set_gain(
@@ -87,7 +88,11 @@ long LoadCell::read()
 {
     // from bogde/HX711
     // @see https://github.com/bogde/HX711/blob/5c526afe67004a8354d5c52db5d58e4b8ceca645/HX711.cpp
-    // while(!is_ready());
+    int b = 0;
+    while(!is_ready() && b++ < 100000);
+    if(b > 100000){
+        return -1;
+    }
 
     char data[3];
     // pulse the clock pin 24 times to read the data
@@ -97,7 +102,7 @@ long LoadCell::read()
             // set bit to value
             bool value = pins[PIN_DATA].get();
             char bit = 1 << i;
-            data[j] = data[j] & (0xFF + bit); // use mask to set bit to 0
+            data[j] = data[j] & (0xFF ^ bit); // use mask to set bit to 0
             if(value) data[j] |= bit; // set bit to 1
             pins[PIN_CLCK].set(false);
         }
@@ -107,6 +112,7 @@ long LoadCell::read()
     // set the channel and gain factor for the next reading using the clock pin
     for (int i = 0; i < gain; ++i) {
         pins[PIN_CLCK].set(true);
+        pins[PIN_DATA].get();
         pins[PIN_CLCK].set(false);
     }
 
@@ -115,11 +121,16 @@ long LoadCell::read()
 
 long LoadCell::read_average(char times)
 {
-    long sum = 0;
+    long sum = 0, N = 0;
     for(int i = 0; i < times; ++i){
-        sum += read();
+        long r = read();
+        if(r <= 0){
+            // ++times;
+        } else {
+            ++N;
+        }
     }
-    return sum / times;
+    return sum / N;
 }
 
 void LoadCell::tare(char times)
@@ -177,7 +188,7 @@ void LoadCell::on_gcode_received(void *argument)
                     display = false;
                 }
                 if(display){
-                    gcode->stream->printf("Gain: %d\tOffset: %d\tScale: %f\n", gain, offset, scale);
+                    gcode->stream->printf("Gain: %d\tOffset: %ld\tScale: %f\n", gain, offset, scale);
                     gcode->mark_as_taken();
                 }
             } break;
@@ -189,9 +200,46 @@ void LoadCell::on_gcode_received(void *argument)
             } break;
 
             case 153: { // simple read
-                long d = read();
-                gcode->stream->printf("Read: %d | %ld\n", d, d);
+                char times = gcode->has_letter('T') ? char(gcode->get_value('T')) : 1;
+                long d = read_average(times);
+                gcode->stream->printf("Read(%d): %ld\n", times, d);
                 gcode->mark_as_taken();
+            } break;
+
+            case 154: { // loadcell debug
+                int c = 0;
+                while(!is_ready() && c++ < 100000);
+                if(c > 100000){
+                    gcode->stream->printf("Warning: not ready.\n");
+                }
+                char data[3];
+                char bits[28] = { 0 };
+                int b = 0;
+                // pulse the clock pin 24 times to read the data
+                for(int j = 3; j--;) {
+                    for(int i = 8; i--;){
+                        pins[PIN_CLCK].set(true);
+                        // set bit to value
+                        bool value = pins[PIN_DATA].get();
+                        bits[b++] = value ? '1' : '0';
+                        char bit = 1 << (7 - i);
+                        data[j] = data[j] & (0xFF ^ bit); // use mask to set bit to 0
+                        if(value) data[j] |= bit; // set bit to 1
+                        pins[PIN_CLCK].set(false);
+                    }
+                    bits[b++] = ' ';
+                }
+                data[2] ^= 0x80;
+            
+                // set the channel and gain factor for the next reading using the clock pin
+                for (int i = 0; i < gain; ++i) {
+                    pins[PIN_CLCK].set(true);
+                    pins[PIN_DATA].get(); // to take some time
+                    pins[PIN_CLCK].set(false);
+                }
+            
+                long r = ((uint32_t) data[2] << 16) | ((uint32_t) data[1] << 8) | (uint32_t) data[0];
+                gcode->stream->printf("Read: %ld for bits=%s\n", r, bits);
             } break;
 
         }
