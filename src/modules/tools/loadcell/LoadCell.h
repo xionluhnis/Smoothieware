@@ -5,10 +5,6 @@
 #include "libs/Module.h"
 #include "libs/Pin.h"
 
-#include "hx711.h"
-
-#include <bitset>
-
 class LoadCell : public Module{
     public:
         LoadCell();
@@ -32,7 +28,6 @@ class LoadCell : public Module{
 
         void on_get_public_data(void* argument);
         void on_set_public_data(void* argument);
-        void on_idle(void *argument);
 
         char   gain;
         long   offset;

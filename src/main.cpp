@@ -16,6 +16,7 @@
 #include "modules/tools/scaracal/SCARAcal.h"
 #include "modules/tools/switch/SwitchPool.h"
 #include "modules/tools/temperatureswitch/TemperatureSwitch.h"
+#include "modules/tools/loadcell/LoadCell.h"
 
 #include "modules/robot/Conveyor.h"
 #include "modules/utils/simpleshell/SimpleShell.h"
@@ -151,6 +152,9 @@ void init() {
     #endif
     #ifndef NO_TOOLS_SPINDLE
     kernel->add_module( new Spindle() );
+    #endif
+    #ifndef NO_TOOLS_LOADCELL
+    kernel->add_module( new LoadCell() );
     #endif
     #ifndef NO_UTILS_PANEL
     kernel->add_module( new Panel() );
